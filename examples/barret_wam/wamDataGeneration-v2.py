@@ -187,7 +187,7 @@ def goToGoal(env, lastObs, objPosition):
 
 
     for i in range(10): 
-        action = np.array([0, -0.005, 0, 0, random.uniform(-1, -0.5)])
+        action = np.array([0, -0.002, 0, 0, random.uniform(-1, -0.5)])
         obsData, _, _, info = env.step(action)
         episodeAcs.append(action)
         episodeInfo.append(info)

@@ -76,10 +76,9 @@ class GazeboWAMemptyEnvv2(gazebo_env.GazeboEnv):
         self.markers = False
         self.distanceThreshold = 0.079
         self.objectSize = 0.08
-        self.distanceThresholdDemo = 0.05
         self.baseFrame = 'iri_wam_link_base'
         self.homingTime = 0.2 # time given for homing
-        self.lenGoal = 3 # goal position list length
+        self.lenGoal = 6 # goal position list length
         self._max_episode_steps = 19 + ((self.type == 'train') * 31)
         self.reward_type = 'sparse'
         self.objectName = {
@@ -131,9 +130,9 @@ class GazeboWAMemptyEnvv2(gazebo_env.GazeboEnv):
         self.action_space = spaces.Box(-1., 1., shape=(self.n_actions,), dtype='float32')
 
         self.observation_space = spaces.Dict(dict(
-            desired_goal=spaces.Box(-np.inf, np.inf, shape=(self.lenObs,), dtype='float32'),
+            desired_goal=spaces.Box(-np.inf, np.inf, shape=(self.lenGoal,), dtype='float32'),
             achieved_goal=spaces.Box(-np.inf, np.inf, shape=(self.lenGoal,), dtype='float32'),
-            observation=spaces.Box(-np.inf, np.inf, shape=(self.lenGoal,), dtype='float32'),
+            observation=spaces.Box(-np.inf, np.inf, shape=(self.lenObs,), dtype='float32'),
         ))
 
         rospy.wait_for_service('/gazebo/unpause_physics')
@@ -274,13 +273,18 @@ class GazeboWAMemptyEnvv2(gazebo_env.GazeboEnv):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
-    def compute_reward_HER(self, achieved_goal, desired_goal, info):
+    def compute_reward(self, achieved_goal, desired_goal, info):
         # Compute distance between goal and the achieved goal.
-        reward = -np.ones(achieved_goal.shape[0])
-        for x in range(achieved_goal.shape[0]):
-            d = goal_distance(achieved_goal[x][:3], desired_goal[x][:3])
-            d2 = goal_distance(achieved_goal[x][3:], desired_goal[x][3:])
-            reward[x] = -(d > self.distanceThreshold or d2 > self.distanceThreshold).astype(np.float32)
+        if len(achieved_goal.shape) == 1:
+            d = goal_distance(achieved_goal[:3], desired_goal[:3]) #fixed block
+            d2 = goal_distance(achieved_goal[3:], desired_goal[3:])
+            reward = -(d > self.distanceThreshold or d2 > self.distanceThreshold ).astype(np.float32)
+        else:
+            reward = -np.ones(achieved_goal.shape[0])
+            for x in range(achieved_goal.shape[0]):
+                d = goal_distance(achieved_goal[x][:3], desired_goal[x][:3])
+                d2 = goal_distance(achieved_goal[x][3:], desired_goal[x][3:])
+                reward[x] = -(d > self.distanceThreshold or d2 > self.distanceThreshold).astype(np.float32)
     
         return reward
 
@@ -290,15 +294,6 @@ class GazeboWAMemptyEnvv2(gazebo_env.GazeboEnv):
         #return (d < self.distanceThreshold and (d2 <= 0.8)).astype(np.float32)
         return (d < self.distanceThreshold and d2 < self.distanceThreshold ).astype(np.float32)
 
-    def compute_reward(self, achieved_goal, desired_goal, info):
-        # Compute distance between goal and the achieved goal.
-        d = goal_distance(achieved_goal[:3], desired_goal[:3]) #fixed block
-        d2 = goal_distance(achieved_goal[3:], desired_goal[3:])
-
-        if self.reward_type == 'sparse':
-            return -(d > self.distanceThreshold or d2 > self.distanceThreshold ).astype(np.float32)
-        else:
-            return -d
 
 
 
@@ -321,7 +316,6 @@ class GazeboWAMemptyEnvv2(gazebo_env.GazeboEnv):
             'is_success': self._is_success(obs['achieved_goal'], obs['desired_goal']),
         }
 
-        
         #reward2  = goal_distance(np.array([self.object.position.x, self.object.position.y, self.object.position.z]), self.goal)
         #reward = self.compute_reward(obs['achieved_goal'], self.goal, info)
         reward = self.compute_reward(obs['achieved_goal'], obs['desired_goal'], info)
@@ -352,10 +346,10 @@ class GazeboWAMemptyEnvv2(gazebo_env.GazeboEnv):
             self.publishers[num].publish(lastObs[num] + joint)
 
 
-        if (action[self.n_actions-1]) > 0.1: #close
+        if (action[self.n_actions-1]) > 0.001: #close
             gripperClient('close')
             #print("CLOSE")
-        elif (action[self.n_actions-1]) < -0.1: #open
+        elif (action[self.n_actions-1]) < -0.001: #open
             gripperClient('open')
             #print("OPEN")
         else: None
