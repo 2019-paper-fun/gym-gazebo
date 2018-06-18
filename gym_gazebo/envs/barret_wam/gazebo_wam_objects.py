@@ -62,10 +62,7 @@ class GazeboWAMemptyEnvv2(gazebo_env.GazeboEnv):
         self.publishers[3] = rospy.Publisher('/iri_wam/joint6_position_controller/command', Float64, queue_size=1)
         # self.publishers[6] = rospy.Publisher('/iri_wam/joint7_position_controller/command', Float64, queue_size=5) # discretely publishing motor actions for now
         
-        self.pubMarker = ['marker1', 'marker2', 'marker3']
-        self.pubMarker[0] = rospy.Publisher('/goalPose0', Marker, queue_size=1)
-        self.pubMarker[1] = rospy.Publisher('/goalPose1', Marker, queue_size=1)
-        self.pubMarker[2] = rospy.Publisher('/goalPose2', Marker, queue_size=1)
+        
 
         self.unpause = rospy.ServiceProxy('/gazebo/unpause_physics', Empty)
         #self.pause = rospy.ServiceProxy('/gazebo/pause_physics', Empty)
@@ -76,11 +73,12 @@ class GazeboWAMemptyEnvv2(gazebo_env.GazeboEnv):
 
 
         self.type = 'train' # 'data'
+        self.markers = False
         self.distanceThreshold = 0.079
         self.objectSize = 0.08
         self.distanceThresholdDemo = 0.05
         self.baseFrame = 'iri_wam_link_base'
-        self.homingTime = 0.1 # time given for homing
+        self.homingTime = 0.2 # time given for homing
         self.lenGoal = 3 # goal position list length
         self._max_episode_steps = 19 + ((self.type == 'train') * 31)
         self.reward_type = 'sparse'
@@ -89,6 +87,12 @@ class GazeboWAMemptyEnvv2(gazebo_env.GazeboEnv):
         }
               
 
+        if self.markers:
+            self.pubMarker = ['marker1', 'marker2', 'marker3']
+            self.pubMarker[0] = rospy.Publisher('/goalPose0', Marker, queue_size=1)
+            self.pubMarker[1] = rospy.Publisher('/goalPose1', Marker, queue_size=1)
+            self.pubMarker[2] = rospy.Publisher('/goalPose2', Marker, queue_size=1)
+            
         self.home = np.array([0, 0.6, 1.4, 0, 0]) # what position is the homing
         # self.Xacrohigh = np.array([2.6, 2.0, 2.8, 3.1, 1.24, 1.57, 2.96])
         # self.Xacrolow = np.array([-2.6, -2.0, -2.8, -0.9, -4.76, -1.57, -2.96])
@@ -113,7 +117,7 @@ class GazeboWAMemptyEnvv2(gazebo_env.GazeboEnv):
         self.lowAction = [-1, -1, -1, -1, -1]
         self.highAction = [1, 1, 1, 1, 1]
         self.n_actions = len(self.highAction)
-        self.lenObs = 14
+        self.lenObs = 15
 
         self.lastObservation = None
         self.lastObservationJS = None
@@ -324,8 +328,9 @@ class GazeboWAMemptyEnvv2(gazebo_env.GazeboEnv):
         done = bool(self._is_success(obs['achieved_goal'], obs['desired_goal'] ))
         #done = False
 
-        self.setMarkers(goal_distance(obs['achieved_goal'][3:], obs['desired_goal'][3:] ), self.goal[3:].copy(), 0)
-        self.setMarkers(goal_distance(obs['achieved_goal'][:3], obs['desired_goal'][:3] ), self.goal[:3].copy(), 2)        
+        if self.markers:
+            self.setMarkers(goal_distance(obs['achieved_goal'][3:], obs['desired_goal'][3:] ), self.goal[3:].copy(), 0)
+            self.setMarkers(goal_distance(obs['achieved_goal'][:3], obs['desired_goal'][:3] ), self.goal[:3].copy(), 2)        
 
         # rospy.wait_for_service('/gazebo/pause_physics')
         # try:
@@ -366,7 +371,7 @@ class GazeboWAMemptyEnvv2(gazebo_env.GazeboEnv):
         gripperPos = self.lastObservation
         gripperOrient = self.lastObservationOrient
         gripperState = 0
-        obs = None
+        obs = []
         
 
         while data is None:
@@ -374,8 +379,8 @@ class GazeboWAMemptyEnvv2(gazebo_env.GazeboEnv):
                 fixedObjectPos = self.get_object_position(self.objectName['objFixed'])
                 objectPos = self.get_object_position(self.objectName['obj1'])
                 data = rospy.wait_for_message('/joint_states', JointState, timeout=1)
-                
-                self.setMarkers( 1.0, objectPos, 1)
+                if self.markers:
+                    self.setMarkers( 1.0, objectPos, 1)
 
                 [gripperPos, gripperOrient] = self.getArmPosition(data.position) #cartesian coordinates of the gripper
                 dataConc = np.array([data.position[0], data.position[1], data.position[3], data.position[5]]) # joint space coordinates of the robotic arm 1, 2, 4, 6
@@ -400,14 +405,12 @@ class GazeboWAMemptyEnvv2(gazebo_env.GazeboEnv):
         obs = np.append(obs, gripperState)
         obs = np.append(obs, fixedObjectPos)
         obs = np.append(obs, objectPos)
-        #obs = np.append(obs, np.linalg.norm(gripperPos - objectPos, axis=-1 ))
+        obs = np.append(obs, np.linalg.norm(gripperPos - objectPos, axis=-1 ))
         #print(" DISTANCE ", np.linalg.norm(gripperPos - objectPos, axis=-1 ))
         
 
         return {
             'observation': obs.copy(),
-            #'achieved_goal': np.concatenate([objectPos, fixedObjectPos]),
-            #'desired_goal': np.concatenate([self.goal , fixedObjectPos]),
             'achieved_goal': np.concatenate([fixedObjectPos, objectPos]),
             'desired_goal': self.goal.copy(),
         }
