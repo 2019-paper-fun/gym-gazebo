@@ -16,6 +16,8 @@ from controller_manager_msgs.srv import SwitchController
 from gym.utils import seeding
 
 
+"""Data generation for the case of a single block pick and taking to a goal position"""
+
 ep_returns = []
 actions = []
 observations = []
@@ -28,102 +30,118 @@ def main():
     numItr = 100
     initStateSpace = "random"
 
-    env.reset()
     print("Reset!")
-    time.sleep(10)
+    env.reset()
+    time.sleep(1)
     while len(actions) < numItr:
-        obs = env.reset()
         print("Reset!")
+        obs = env.reset()
         print("ITERATION NUMBER ", len(actions))
         goToGoal(env, obs)
 
-    fileName = "data_wam"
-
+    fileName = "data_wam_reach"
     fileName += "_" + initStateSpace
-
     fileName += "_" + str(numItr)
-
     fileName += ".npz"
-    
     np.savez_compressed(fileName, acs=actions, obs=observations, info=infos)
 
 
-
-def actionMapping(env, ac, diff):
-
-    action = [0, 0, 0]
-
-    for joint in range(len(ac)):
-        if ac[joint]==0: 
-            #action[joint] = -max(random.uniform((diff[joint]/9), (diff[joint]/3)), 0)
-            action[joint] = -diff[joint]/3
-        elif ac[joint]==1:
-            action[joint] = diff[joint]/3
-
-    return np.array(action)
-
+def has_reached(position, threshold):
+    truth = 1
+    for i in range(len(position)):
+        truth += (np.absolute(position[i]) < threshold)
+    return not truth==6
 
 def goToGoal(env, lastObs):
-
-    difference = np.zeros(env.lenGoal)
     goalPosition = env.goalJS
-    goalPositionConc = [goalPosition[0], goalPosition[1], goalPosition[3]] 
+    goalJS = [goalPosition[0], goalPosition[1], goalPosition[2], goalPosition[3], goalPosition[4]]
+    objectPosInitialJS = [env.objInitialJS[0], env.objInitialJS[1], env.objInitialJS[2], env.objInitialJS[3], env.objInitialJS[4]]
+    gripperPosJS = env.lastObservationJS
 
 
+    object_rel_pos_JS = objectPosInitialJS - gripperPosJS
 
-    #ep_return = 0
     episodeAcs = []
     episodeObs = []
     episodeInfo = []
-    #episodeRews = []    
-    obsData = env.lastObservationJS
+    timeStep = 0
+
+    episodeObs.append(lastObs)
+
+    while has_reached(object_rel_pos_JS, 0.05) and (timeStep <= env._max_episode_steps - 1): # go to object
+        action = [random.uniform(-0.00001, 0.00001), random.uniform(-0.00001, 0.00001), random.uniform(-0.00001, 0.00001), random.uniform(-0.00001, 0.00001), random.uniform(-0.00001, 0.00001), random.uniform(-0.00001, 0.00001)]
+
+        gripperPosJS = env.lastObservationJS
+        object_rel_pos_JS =  objectPosInitialJS - gripperPosJS
 
 
+        for i in range(len(object_rel_pos_JS)):
+            action[i] = object_rel_pos_JS[i]*1
 
-    difference = np.array(obsData) - np.array(goalPositionConc)
-    obsData = lastObs
-
-    for _ in range(env._max_episode_steps):
-
-        
-        actionPreferance = np.zeros(len(difference))
-        for joint in range(len(difference)):
-            if difference[joint] > 0: #backward
-                actionPreferance[joint] = 0
-            elif difference[joint] < 0:
-                actionPreferance[joint] = 1
-            else: None   
-
-        action = actionMapping(env, actionPreferance, np.absolute(difference))
 
         obsDataNew, reward, done, info = env.step(action)
+        timeStep += 1
 
-        #obsData = env.lastObservationJS
-        difference = np.array(env.lastObservationJS) - np.array(goalPositionConc)
-        
-        #ep_return += reward
-        episodeObs.append(obsData)
-        #episodeRews.append(reward)
+
         episodeAcs.append(action)
         episodeInfo.append(info)
-
-        obsData = obsDataNew
-
-        # print (" return: ", reward)
-        # print ("actions : ", action)
-        # print ("observation : ", obsData)
-        #if done: break
-
-    episodeObs.append(obsData)
+        episodeObs.append(obsDataNew)
 
 
-    #ep_returns.append(ep_return)
+    while env.gripperState is 0 and (timeStep <= env._max_episode_steps - 1): # pick it up
+        action = [random.uniform(-0.00001, 0.00001), 0.01, random.uniform(-0.00001, 0.00001), random.uniform(-0.00001, 0.00001), random.uniform(-0.00001, 0.00001), random.uniform(0.7, 1)]
+
+        obsDataNew, reward, done, info = env.step(action)
+        timeStep += 1
+
+        episodeAcs.append(action)
+        episodeInfo.append(info)
+        episodeObs.append(obsDataNew)
+
+
+    goal_rel_pos_JS = goalJS - gripperPosJS
+    #objectJS = env.objectJS
+    #goal_rel_pos_JS = goalJS - objectJS
+
+    while has_reached(goal_rel_pos_JS, 0.05) and (timeStep <= env._max_episode_steps - 1) :
+        action = [random.uniform(-0.00001, 0.00001), random.uniform(-0.00001, 0.00001), random.uniform(-0.00001, 0.00001), random.uniform(-0.00001, 0.00001), random.uniform(-0.00001, 0.00001), random.uniform(0.7, 1)]
+
+        gripperPosJS = env.lastObservationJS
+        goal_rel_pos_JS = goalJS - gripperPosJS
+
+        # objectJS = env.objectJS
+        # goal_rel_pos_JS = goalJS - objectJS
+
+        for i in range(len(goal_rel_pos_JS)):
+            action[i] = goal_rel_pos_JS[i]*1
+
+
+        obsDataNew, reward, done, info = env.step(action)
+        timeStep += 1
+
+        episodeAcs.append(action)
+        episodeInfo.append(info)
+        episodeObs.append(obsDataNew)
+
+
+    while True:
+        if timeStep >= env._max_episode_steps: break
+        action = [random.uniform(-0.00001, 0.00001), -0.003, random.uniform(-0.00001, 0.00001), random.uniform(-0.00001, 0.00001), random.uniform(-0.00001, 0.00001), random.uniform(0.7, 1)]
+
+        obsDataNew, reward, done, info = env.step(action)
+        timeStep += 1
+
+        episodeAcs.append(action)
+        episodeInfo.append(info)
+        episodeObs.append(obsDataNew)
+
+    print("Toatal timesteps taken ", timeStep)
     actions.append(episodeAcs)
     observations.append(episodeObs)
     infos.append(episodeInfo)
-    #rewards.append(np.array(episodeRews))
 
     
 
 if __name__ == "__main__":
     main()
+

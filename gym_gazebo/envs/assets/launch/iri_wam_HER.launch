@@ -1,11 +1,9 @@
 <launch>
 
-
   <arg name="ROBOT"        default="iri_wam"/>
   <arg name="IK"           default="true"/>
 
   <!-- these are the arguments you can pass this launch file, for example paused:=true -->
-
   <arg name="world"        default="empty"/>
   <arg name="paused"       default="false"/>
   <arg name="use_sim_time" default="true"/>
@@ -17,7 +15,7 @@
 
   <!-- We resume the logic in empty_world.launch, changing only the name of the world to be launched -->
   <include file="$(find gazebo_ros)/launch/empty_world.launch">
-    <arg name="world_name" value="$(find iri_wam_gazebo)/worlds/iri_wam_HER_obstacles.world"/> 
+    <arg name="world_name" value="/home/rjangir/software/sketchbook/gym-gazebo/gym_gazebo/envs/assets/worlds/iri_wam_HER_obstacles.world"/> 
     <arg name="debug" value="$(arg debug)" />
     <arg name="gui" value="$(arg gui)" />
     <arg name="paused" value="$(arg paused)"/>
@@ -31,7 +29,8 @@
   <param name="robot_description"
          command="$(find xacro)/xacro --inorder '$(find gz_gripper_plugin)/xacro/iri_wam.urdf.xacro'" />
 
-
+         <!-- <param name="robot_description"
+         command="$(find xacro)/xacro inorder '$(find iri_wam_description)/xacro/iri_wam.urdf.xacro'" /> -->
   <!-- Run a python script to the send a service call to gazebo_ros to spawn a URDF robot -->
   <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
         args="-urdf -model iri_wam -param robot_description"/>
@@ -62,7 +61,7 @@
 
   <!-- <node name="close_client" pkg="actionlib" type="axclient.py" args="/gripper/close_tool iri_common_drivers_msgs/tool_closeAction"/>
 
-  <node name="open_client" pkg="actionlib" type="axclient.py" args="/gripper/open_tool iri_common_drivers_msgs/tool_openAction"/>
- -->
+  <node name="open_client" pkg="actionlib" type="axclient.py" args="/gripper/open_tool iri_common_drivers_msgs/tool_openAction"/> -->
+
 </launch>
 

@@ -1,0 +1,1 @@
+from gym_gazebo.envs.sofa_env import SofaEnv

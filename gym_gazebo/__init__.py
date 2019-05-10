@@ -102,13 +102,14 @@ register(
 # barret wam
 
 register(
-    id='GazeboWAMemptyEnv-v0',
-    entry_point='gym_gazebo.envs.barret_wam:GazeboWAMemptyEnv',
+    id='GazeboWAMemptyEnv-v1',
+    entry_point='gym_gazebo.envs.barret_wam:GazeboWAMemptyEnvv1',
 )
 
 register(
-    id='GazeboWAMemptyEnv-v1',
-    entry_point='gym_gazebo.envs.barret_wam:GazeboWAMemptyEnvv1',
+    id='SofaEnv-v1',
+    entry_point='gym_gazebo.envs.CLOTH:ClothMeshEnv',
+    max_episode_steps=150,
 )
 
 register(

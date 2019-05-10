@@ -19,22 +19,18 @@ from gym.utils import seeding
 from numpy import linalg as LA
 from iri_common_drivers_msgs.srv import QueryInverseKinematics
 from iri_common_drivers_msgs.srv import QueryForwardKinematics
-from gazebo_msgs.msg import ModelStates
+from gazebo_msgs.msg import ModelStates, ModelState
+from gazebo_msgs.srv import SetModelState, GetModelState
+from iri_common_drivers_msgs.msg import tool_closeAction, tool_closeActionGoal, tool_openAction, tool_openActionGoal
+from gz_gripper_plugin.srv import CheckGrasped
 
 
 
-""" Data generation for the case of Goal reaching wiht the wam"""
+"""  WAM ENVIRONMENT FOR SINGLE BLOCK PICK AND REACH A GOAL LEARNING TASK  """
 
 def goal_distance(goal_a, goal_b):
     assert goal_a.shape == goal_b.shape
     return np.linalg.norm(goal_a - goal_b, axis=-1)
-
-def roundOffList(lyst):
-    newLyst = []
-    for i in lyst:
-        newLyst.append(round(i, 4))
-
-    return newLyst
 
 
 class GazeboWAMemptyEnvv1(gazebo_env.GazeboEnv):
@@ -42,72 +38,77 @@ class GazeboWAMemptyEnvv1(gazebo_env.GazeboEnv):
     def __init__(self):
         # Launch the simulation with the given launchfile name
         gazebo_env.GazeboEnv.__init__(self, "iri_wam_HER.launch")
-        self.publishers = ['pub1', 'pub2', 'pub4', 'pub3', 'pub5', 'pub6', 'pub7'] #publishers for the motor commands
+        self.publishers = ['pub1', 'pub2', 'pub4', 'pub5', 'pub6'] #publishers for the motor commands
 
         self.publishers[0] = rospy.Publisher('/iri_wam/joint1_position_controller/command', Float64, queue_size=5)
         self.publishers[1] = rospy.Publisher('/iri_wam/joint2_position_controller/command', Float64, queue_size=5)
         self.publishers[2] = rospy.Publisher('/iri_wam/joint4_position_controller/command', Float64, queue_size=5)
-        self.publishers[3] = rospy.Publisher('/iri_wam/joint3_position_controller/command', Float64, queue_size=5)
-        self.publishers[4] = rospy.Publisher('/iri_wam/joint5_position_controller/command', Float64, queue_size=5)
-        self.publishers[5] = rospy.Publisher('/iri_wam/joint6_position_controller/command', Float64, queue_size=5)
-        self.publishers[6] = rospy.Publisher('/iri_wam/joint7_position_controller/command', Float64, queue_size=5) # discretely publishing motor actions for now
-        self.pubMarker = rospy.Publisher('/goalPose', Marker, queue_size=5)
-
+        self.publishers[3] = rospy.Publisher('/iri_wam/joint5_position_controller/command', Float64, queue_size=5)
+        self.publishers[4] = rospy.Publisher('/iri_wam/joint6_position_controller/command', Float64, queue_size=5)
+       
+        
         self.unpause = rospy.ServiceProxy('/gazebo/unpause_physics', Empty)
-        self.pause = rospy.ServiceProxy('/gazebo/pause_physics', Empty)
-        self.reset_proxy = rospy.ServiceProxy('/gazebo/reset_simulation', Empty)
-        
-        #self.minDisplacement = 0.02 #minimum discrete distance by a single action 
-        #self.minDisplacementTolerance = 0.01
-        #self.minDisplacementPose = self.minDisplacement + self.minDisplacementTolerance  # minimum distance to check for the goal reaching state
-        self.distanceThreshold = 0.09
-        self.baseFrame = 'iri_wam_link_base' 
-        self.homingTime = 0.6 # time given for homing
-        self.lenGoal = 3 # goal position list length
-        self._max_episode_steps = 100
-        self.reward_type = 'sparse'
-              
-        
+        #self.pause = rospy.ServiceProxy('/gazebo/pause_physics', Empty)
+        self.reset_proxy = rospy.ServiceProxy('/gazebo/reset_world', Empty)
+        self.set_state = rospy.ServiceProxy("/gazebo/set_model_state",SetModelState)
+        self.get_state = rospy.ServiceProxy("/gazebo/get_model_state",GetModelState)
+        self.get_gripper = rospy.ServiceProxy('/check_grasped', CheckGrasped)
+        self.close_gripper = rospy.ServiceProxy('/gripper/close', CheckGrasped)
+        self.open_gripper = rospy.ServiceProxy('/gripper/open', CheckGrasped)
 
-        self.home = np.zeros(4) # what position is the homing
+
+        self.type = 'train' # 'data'
+        self.markers = 1
+        self.distanceThreshold = 0.09
+        self.objectSize = 0.06
+        self.fixedObjectSize = 0.09
+        self.baseFrame = 'iri_wam_link_base'
+        self.homingTime = 0.2 # time given for homing
+        self.lenGoal = 3 # goal position list length
+        self._max_episode_steps = 50
+        self.reward_type = 'sparse'
+        self.objectName = {
+            "obj1" : 'obs_0', "objFixed" : 'obs_fixed'
+        }
+              
+        if self.markers:
+            self.pubMarker = ['marker1', 'marker2', 'marker3']
+            self.pubMarker[0] = rospy.Publisher('/goalPose0', Marker, queue_size=5)
+            self.pubMarker[1] = rospy.Publisher('/goalPose1', Marker, queue_size=5)
+            self.pubMarker[2] = rospy.Publisher('/goalPose2', Marker, queue_size=5)
+            
+        self.home = np.array([0, 0.6, 1.4, 0, 0]) # what position is the homing
         # self.Xacrohigh = np.array([2.6, 2.0, 2.8, 3.1, 1.24, 1.57, 2.96])
         # self.Xacrolow = np.array([-2.6, -2.0, -2.8, -0.9, -4.76, -1.57, -2.96])
-        # self.IKlow = np.array([-2.6, -1.94, -2.73, -0.88, -4.74, -1.55, -2.98])
-        # self.IKhigh = np.array([2.6, 1.94, 2.73, 3.08, 1.22, 1.55, 2.98])
-        
-        #self.low = np.array([-2.6, -1.42, -2.73, -0.88, -4.74, -1.55, -2.98])
-        #self.high = np.array([2.6, 1.42, 2.73, 3.08, 1.22, 1.55, 2.98])
-
-        #self.lowConc = np.array([-2.6, -1.42, -0.88, -2.6, -1.42, -0.88]) #1, 2, 4, 1, 2, 4
-        #self.highConc = np.array([2.6, 1.42, 3.08, 2.6, 1.42, 3.08])
-
-        self.lowConcObs = np.array([-2.6, -1.42, -0.88]) #1, 2, 4
-        self.highConcObs = np.array([2.6, 1.42, 3.08])
-
-        self.samplelow = np.array([-2.4, -1.4, -2.03, -0.68, -4.04, -1.05, -2.08])
-        self.samplehigh = np.array([2.4, 1.4, 2.03, 2.78, 1.0, 1.05, 2.08])
-
-        #self.samplelow = np.array([-1.5, -0.8, -2.03, -0.48, -4.04, -1.05, -2.08])
-        #self.samplehigh = np.array([1.5, 0.8, 2.03, 2.48, 1.0, 1.05, 2.08])
-        #self.high = np.array([5.2, 2.8, 5.4, 3.96, 6.96, 3.1, 5.96])        
-        self.lowAction = [-1, -1, -1]
-        self.highAction = [1, 1, 1]
+        self.lowConcObs = np.array([-2.6, -1.94, -0.88, -4.76, -1.55]) #1, 2, 4, 6 #check if they lie inside the envelope
+        self.highConcObs = np.array([2.6, 1.94, 3.08, 1.24, 1.55])
+        self.lowAction = [-1, -1, -1, -1, -1, -1]
+        self.highAction = [1, 1, 1, 1, 1, 1]
         self.n_actions = len(self.highAction)
+        self.lenObs = 18
 
         self.lastObservation = None
         self.lastObservationJS = None
+        self.lastObservationOrient = None
         self.goal = None
         self.goalJS = None
+        self.object = None
+        self.objectJS = None
+        self.objInitial = None
+        self.objInitialJS = None
 
         self.action_space = spaces.Box(-1., 1., shape=(self.n_actions,), dtype='float32')
-
         self.observation_space = spaces.Dict(dict(
-            desired_goal=spaces.Box(-np.inf, np.inf, shape=(len(self.highConcObs),), dtype='float32'),
-            achieved_goal=spaces.Box(-np.inf, np.inf, shape=(len(self.highConcObs),), dtype='float32'),
-            observation=spaces.Box(-np.inf, np.inf, shape=(len(self.highConcObs),), dtype='float32'),
+            desired_goal=spaces.Box(-np.inf, np.inf, shape=(self.lenGoal,), dtype='float32'),
+            achieved_goal=spaces.Box(-np.inf, np.inf, shape=(self.lenGoal,), dtype='float32'),
+            observation=spaces.Box(-np.inf, np.inf, shape=(self.lenObs,), dtype='float32'),
         ))
 
-        #self.reward_range = (-np.inf, np.inf)
+        rospy.wait_for_service('/gazebo/unpause_physics')
+        try:
+            self.unpause()
+        except (rospy.ServiceException) as e:
+            print ("/gazebo/unpause_physics service call failed")
 
 
     def getForwardKinematics(self, goalPosition): #get catesian coordinates for joint Positions
@@ -119,41 +120,64 @@ class GazeboWAMemptyEnvv1(gazebo_env.GazeboEnv):
         except (rospy.ServiceException) as e:
             print ("Service call failed: %s"%e)
 
+    def getInverseKinematics(self, goalPose): #get joint angles for reaching the goal position
+        tempPose = Pose()
+        tempPose = goalPose
+        goalPoseStamped = PoseStamped()
+        goalPoseStamped.header.frame_id = self.baseFrame
+        goalPoseStamped.pose = tempPose
+        rospy.wait_for_service('/iri_wam/iri_wam_ik/get_wam_ik')
+        #rospy.wait_for_service('/iri_wam/iri_wam_tcp_ik/get_wam_ik')
+        try:
+            getIK = rospy.ServiceProxy('/iri_wam/iri_wam_ik/get_wam_ik', QueryInverseKinematics)
+            #getIK = rospy.ServiceProxy('/iri_wam/iri_wam_tcp_ik/get_wam_ik', QueryInverseKinematics)
+            jointPositionsReturned = getIK(goalPoseStamped)
+            return [jointPositionsReturned.joints.position[0], jointPositionsReturned.joints.position[1], jointPositionsReturned.joints.position[3], jointPositionsReturned.joints.position[4], jointPositionsReturned.joints.position[5]]
+        except (rospy.ServiceException) as e:
+            print ("Service call failed: %s"%e)
 
-    def getGripperPosition(self, joints):
+
+    def getArmPosition(self, joints):
         frame_ID = self.baseFrame
         tempJointState = JointState()
         tempJointState.header.frame_id = self.baseFrame
         tempJointState.position = joints
-
         tempPoseFK = self.getForwardKinematics(tempJointState)
+        return [np.array([tempPoseFK.pose.pose.position.x, tempPoseFK.pose.pose.position.y, tempPoseFK.pose.pose.position.z]), np.array([tempPoseFK.pose.pose.orientation.x, tempPoseFK.pose.pose.orientation.y, tempPoseFK.pose.pose.orientation.z, tempPoseFK.pose.pose.orientation.w ])]
 
-        return np.array([tempPoseFK.pose.pose.position.x, tempPoseFK.pose.pose.position.y, tempPoseFK.pose.pose.position.z])
 
+    def sample_goal_onTable(self): #sample from reachable positions
+        self.armGoalXtraHeight = 0.02
+        if self.objInitial != None:
+            sampledGoal = self.objInitial
+            xFactor = random.uniform(0.0, 0.2) * np.random.choice([-1, 1], 1)
+            sampledGoal.position.x += xFactor
+            if np.absolute(xFactor) < 0.15:
+                sampledGoal.position.y += random.uniform(0.15, 0.25) * np.random.choice([-1, 1], 1)
+            else :
+                sampledGoal.position.y += random.uniform(0.05, 0.25) * np.random.choice([-1, 1], 1)
+            sampledGoal.position.z += self.armGoalXtraHeight + self.objectSize  +  random.uniform(0.0, 0.3)# goal for arm
+            sampledGoal.orientation.x = 0.0
+            sampledGoal.orientation.y = 1.0
+            sampledGoal.orientation.z = 0.0
+            sampledGoal.orientation.w = 0.0
 
-    def _sample_goal(self): #sample from reachable positions
-        frame_ID = self.baseFrame
-        tempPoseFK = None
+            sampledGoal.position.x = np.asscalar(np.clip(sampledGoal.position.x, 0.4, 0.55))
+            sampledGoal.position.y = np.asscalar(np.clip(sampledGoal.position.y, -0.35 , 0.35))
 
-        while tempPoseFK==None:
-            tempPosition = []
-            for joint in range(4):
-                tempPosition.append(random.uniform(self.samplelow[joint], self.samplehigh[joint]))
-
-            tempPosition.append(0)
-            tempPosition.append(0)
-            tempPosition.append(0)
-            tempPosition[2] = 0
-            tempJointState = JointState()
-            tempJointState.header.frame_id = self.baseFrame
-            tempJointState.position = tempPosition
-
-            self.goalJS = tempPosition
-            tempPoseFK = self.getForwardKinematics(tempJointState)
-            if tempPoseFK!=None:
-                tempTemp = [tempPoseFK.pose.pose.position.x, tempPoseFK.pose.pose.position.y, tempPoseFK.pose.pose.position.z]
-                return np.array(tempTemp)
-                
+            if self.type == 'data' : self.goalJS = self.getInverseKinematics(sampledGoal)
+            return np.array([sampledGoal.position.x, sampledGoal.position.y, sampledGoal.position.z - self.armGoalXtraHeight]) # actual goal
+        else:
+            sampledGoal.position.x = 0.5001911647282589
+            sampledGoal.position.y = 0.1004797189877992
+            sampledGoal.position.z = -0.21252162794043228
+            sampledGoal.orientation.x = 0.0
+            sampledGoal.orientation.y = 1.0
+            sampledGoal.orientation.z = 0.0
+            sampledGoal.orientation.w = 0.0
+            sampledGoal.position.z += 1.075 + self.objectSize + self.armGoalXtraHeight# goal for arm
+            if self.type == 'data' : self.goalJS = self.getInverseKinematics(sampledGoal)
+            return np.array([sampledGoal.position.x, sampledGoal.position.y, sampledGoal.position.z - self.armGoalXtraHeight]) # actual goal
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
@@ -162,105 +186,144 @@ class GazeboWAMemptyEnvv1(gazebo_env.GazeboEnv):
     def compute_reward(self, achieved_goal, desired_goal, info):
         # Compute distance between goal and the achieved goal.
         d = goal_distance(achieved_goal, desired_goal)
-        if self.reward_type == 'sparse':
-            return -(d > self.distanceThreshold).astype(np.float32)
-        else:
-            return -d
+        return -(d > self.distanceThreshold).astype(np.float32)
 
     def _is_success(self, achieved_goal, desired_goal):
         d = goal_distance(achieved_goal, desired_goal)
-        #if (d < self.distanceThreshold).astype(np.float32): print("SUCKSESSS")
         return (d < self.distanceThreshold).astype(np.float32)
+
+    def relaxed_goal_checking(self, goal_a, goal_b):
+        x_distance = np.absolute(goal_a[0] - goal_b[0])
+        y_distance = np.absolute(goal_a[1] - goal_b[1])
+        z_distance = np.absolute(goal_a[2] - goal_b[2])
+        return ((x_distance < self.distanceThreshold) and (y_distance < self.distanceThreshold) and (z_distance < self.distanceThreshold))
 
 
     def step(self, action):
-        action = np.clip(action, self.action_space.low, self.action_space.high)
-        #print ("action received ", action )
-    
-
-        rospy.wait_for_service('/gazebo/unpause_physics')
-        try:
-            self.unpause()
-        except (rospy.ServiceException) as e:
-            print ("/gazebo/unpause_physics service call failed")
-
-        
-        self._set_action(action)
+        action = np.clip(action, self.action_space.low, self.action_space.high) #clip action to get inside action space range
+        self._set_action(action) 
         obs = self._get_obs()
         info = {
-            'is_success': self._is_success(obs['achieved_goal'], self.goal),
+            'is_success': self._is_success(obs['achieved_goal'], obs['desired_goal']),
         }
-        reward = self.compute_reward(obs['achieved_goal'], self.goal, info)
-        #done = bool(self._is_success(obs['achieved_goal'], self.goal))
-        done = False
+        reward = self.compute_reward(obs['achieved_goal'], obs['desired_goal'], info)
+        done = bool(info['is_success'])
 
-        self.setMarkers(goal_distance(obs['achieved_goal'], self.goal))        
-
-        rospy.wait_for_service('/gazebo/pause_physics')
-        try:
-            self.pause()
-        except (rospy.ServiceException) as e:
-            print ("/gazebo/pause_physics service call failed")
-        
+        if self.markers:
+            self.setMarkers(self.relaxed_goal_checking(obs['achieved_goal'], obs['desired_goal']), self.goal.copy(), 0) #goal position
+            
         return obs, reward, done, info
 
     
 
     def _set_action(self, action):
-
         action = action.copy()  # ensure that we don't change the action outside of this scope
-        lastObs = self.lastObservationJS.copy()
-        #print ("action received ", action)
-        action *= 0.4 #limiting maximum displacement by actions
-        #print ("action Gicen after augmenting ", action)
-        for num, joint in enumerate(action):
-            self.publishers[num].publish(lastObs[num] + joint)
+        #action *= 0.5
+        lastObs = self.lastObservationJS.copy() #get the last position of the arm joints
+        for num, joint in enumerate(action[:self.n_actions-1]):
+            self.publishers[num].publish(lastObs[num] + joint) # append the action to the last position
+
+        if (action[self.n_actions-1]) > 0.1: #close
+            self.close_gripper_func()
+            #print("CLSOE")
+        if (action[self.n_actions-1]) < -0.1: #open
+            self.open_gripper_func()
+            #print("OPEn")
+        else: None
+            #print("NONE")
+
             
-
-
     def _get_obs(self):
         data = None
-        objectState = None
-        gripperPos = self.lastObservation   
-
+        objectPos, objectOrientation = np.zeros(3), np.zeros(4)
+        gripperPos = self.lastObservation
+        gripperOrient = self.lastObservationOrient
+        self.gripperState = None
+        obs = []
+        
         while data is None:
             try:
                 data = rospy.wait_for_message('/joint_states', JointState, timeout=1)
-                # temp = rospy.wait_for_message('/gazebo/model_states', ModelStates, timeout=1)
-                # objectState = [temp.pose[3].position.x, temp.pose[3].position.y, temp.pose[3].position.z]
-                # print("Object state ios ", objectState)
-                gripperPos = self.getGripperPosition(data.position) #cartesian coordinates of the gripper
-                dataConc = np.array([data.position[0], data.position[1], data.position[3]]) # joint space coordinates of the robotic arm 1, 2, 4
+                [objectPos, objectOrientation] = self.get_object_pose(self.objectName['obj1'])
+                if self.markers:
+                    self.setMarkers( 1.0, objectPos, 1) #MARKER for current object position, free movable object
+
+                [gripperPos, gripperOrient] = self.getArmPosition(data.position) #cartesian coordinates of the gripper
+                dataConc = np.array([data.position[0], data.position[1], data.position[3], data.position[4], data.position[5]]) # joint space coordinates of the robotic arm 1, 2, 4, 6
+                self.gripperState = self.get_gripper_state()
                 if ((np.array(dataConc)<=self.highConcObs).all()) and ((np.array(dataConc)>=self.lowConcObs).all()): #check if they lie inside allowed envelope
                     self.lastObservation = gripperPos.copy()
                     self.lastObservationJS = dataConc.copy()
+                    self.lastObservationOrient = gripperOrient.copy()
                 else:
                     data = None
                     print ("Bad observation data received STEP" )
-                    for joint in range(3):
+                    for joint in range(len(self.publishers)):
                         self.publishers[joint].publish(self.home[joint]) #homing at every reset
                     time.sleep(self.homingTime)
             except:
                 pass
 
+        obs = np.append(obs, gripperPos.ravel()) #3
+        obs = np.append(obs, gripperOrient.ravel()) #4
+        obs = np.append(obs, self.gripperState) #1
+        obs = np.append(obs, objectPos.ravel()) #3
+        obs = np.append(obs, objectOrientation.ravel())#4
+        obs = np.append(obs, (objectPos - gripperPos).ravel()) #3
+        
         return {
-            'observation': gripperPos.copy(),
-            'achieved_goal': gripperPos.copy(),
+            'observation': obs.copy(),
+            'achieved_goal': objectPos.copy(),
             'desired_goal': self.goal.copy(),
         }
         
 
+    def get_object_pose(self, objectName):
+        rospy.wait_for_service('/gazebo/get_model_state')
+        try:
+            temp = self.get_state(objectName, None)
+            temp.pose.position.z -= 1.075 #adjust according to table height
+            #objectPos = np.array([temp.pose.position.x, temp.pose.position.y, temp.pose.position.z])
+            if objectName == self.objectName['obj1'] :
+                self.object = temp.pose
+                #self.objectJS = np.array(self.getInverseKinematics(self.object)).copy()
+            return [np.array([temp.pose.position.x, temp.pose.position.y, temp.pose.position.z]), np.array([temp.pose.orientation.x, temp.pose.orientation.y, temp.pose.orientation.z, temp.pose.orientation.w ])]
+        except (rospy.ServiceException) as e:
+            print ("/gazebo/get_model_state service call failed")
 
 
+    def get_gripper_state(self):
+        rospy.wait_for_service('/check_grasped')
+        try:
+            temp = self.get_gripper()
+            if temp.grasped == '':
+                return 0
+            else: return 1 
+
+        except (rospy.ServiceException) as e:
+            print ("/check_grasped service call failed")
+
+    def close_gripper_func(self):
+        rospy.wait_for_service('/gripper/close')
+        try:
+            temp = self.close_gripper()
+        except (rospy.ServiceException) as e:
+            print ("/close gripper service call failed")
+
+    def open_gripper_func(self):
+        rospy.wait_for_service('/gripper/open')
+        try:
+            temp = self.open_gripper()
+        except (rospy.ServiceException) as e:
+            print ("/open gripper service call failed")
 
     def reset(self):
-
-        rospy.wait_for_service('/gazebo/unpause_physics')
-        try:
-            #resp_pause = pause.call()
-            self.unpause()
-        except (rospy.ServiceException) as e:
-            print ("/gazebo/unpause_physics service call failed")
+        # rospy.wait_for_service('/gazebo/reset_world') # Reset simulation was causing problems, do not reset simulation
+        # try:
+        #     #reset_proxy.call()
+        #     self.reset_proxy()
+        # except (rospy.ServiceException) as e:
+        #     print ("/gazebo/reset_world service call failed")
 
 
         # rospy.wait_for_service('/iri_wam/controller_manager/list_controllers')
@@ -281,55 +344,87 @@ class GazeboWAMemptyEnvv1(gazebo_env.GazeboEnv):
         #     print ("Service call failed: %s"%e)
 
         
-        for joint in range(3):
+        for joint in range(len(self.publishers)):
             self.publishers[joint].publish(self.home[joint]) #homing at every reset
+        self.open_gripper_func()
         time.sleep(self.homingTime)
 
-        self.goal = self._sample_goal().copy() # get a random goal every time you reset
-        obs = self._get_obs()
-                
-
-        rospy.wait_for_service('/gazebo/pause_physics')
+        rospy.wait_for_service('/gazebo/set_model_state')
         try:
-            #resp_pause = pause.call()
-            self.pause()
+            pose = Pose()
+            state = ModelState()
+            state.model_name = self.objectName['obj1']
+            pose.position.x = 0.5001911647282589
+            pose.position.y = 0.1004797189877992
+            pose.position.z = 0.9
+            pose.orientation.x = 0.00470048637345294
+            pose.orientation.y = 0.99998892605584
+            pose.orientation.z = 9.419015715062839e-06
+            pose.orientation.w = -0.00023044483691539005
+            state.pose = pose
+            ret = self.set_state(state)
         except (rospy.ServiceException) as e:
-            print ("/gazebo/pause_physics service call failed")
+            print ("/gazebo/set model pose service call failed")
+
+
+        _, _ = self.get_object_pose(self.objectName['obj1'])
+        self.objInitial = self.object
+        self.objInitialJS = self.getInverseKinematics(self.objInitial) # reference for sampling the goal
+        self.goal = self.sample_goal_onTable().copy() # get a random goal every time you reset
+        obs = self._get_obs()
 
         return obs
 
 
-    def setMarkers(self, difference):
-        goalState = self.goal.copy()
+    def setMarkers(self, difference, point, objID):
         pointToPose = Point()
-        pointToPose.x = goalState[0]
-        pointToPose.y = goalState[1]
-        pointToPose.z = goalState[2]
+        pointToPose.x = point[0]
+        pointToPose.y = point[1]
+        pointToPose.z = point[2]
         markerObj = Marker()
         markerObj.header.frame_id = self.baseFrame
-        #markerObj.header.stamp = rospy.get_rostime()
-        markerObj.id = 0
+        markerObj.id = objID
         markerObj.ns = 'iri_wam'
         markerObj.type = markerObj.SPHERE
         markerObj.action = markerObj.ADD
         markerObj.pose.position = pointToPose
         markerObj.pose.orientation.w = 1.0
-        markerObj.scale.x = 0.09
-        markerObj.scale.y = 0.09
-        markerObj.scale.z = 0.09
+        
+        if objID == 0: #moving block
+            markerObj.scale.x = self.distanceThreshold
+            markerObj.scale.y = self.distanceThreshold
+            markerObj.scale.z = self.distanceThreshold
+            if difference:
+                markerObj.color.g = 1.0
+                markerObj.color.a = 1.0
 
+            else: 
+                markerObj.color.r = 1.0
+                markerObj.color.a = 1.0
+        elif objID == 2: #fixed block
+            markerObj.scale.x = self.fixedObjectSize
+            markerObj.scale.y = self.fixedObjectSize
+            markerObj.scale.z = self.distanceThreshold
+            if difference :
+                markerObj.color.g = 1.0
+                markerObj.color.a = 1.0
 
+            else: 
+                markerObj.color.r = 1.0
+                markerObj.color.a = 1.0
+        else:
+            markerObj.scale.x = self.distanceThreshold
+            markerObj.scale.y = self.distanceThreshold
+            markerObj.scale.z = self.distanceThreshold
+            if ( difference <= (self.distanceThreshold)):
+                markerObj.color.g = 1.0
+                markerObj.color.a = 1.0
 
-        if ( difference <= (self.distanceThreshold) ):
-            markerObj.color.g = 1.0
-            markerObj.color.a = 1.0
+            else: 
+                markerObj.color.r = 1.0
+                markerObj.color.a = 1.0            
 
-        else: 
-            markerObj.color.r = 1.0
-            markerObj.color.a = 1.0
-            
-
-        self.pubMarker.publish(markerObj)
+        self.pubMarker[objID].publish(markerObj)
 
 
 
